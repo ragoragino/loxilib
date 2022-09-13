@@ -27,17 +27,25 @@ func L4ServiceProber(sType string, sName string) bool {
 	sOk := false
 	timeout := 1 * time.Second
 
-	if sType != "tcp" && sType != "udp" {
+	var err error
+	var c net.Conn
+
+	switch sType {
+	case "tcp", "udp":
+		c, err = net.DialTimeout(sType, sName, timeout)
+	case "sctp":
+		c, err = DialSCTP(sName, timeout)
+	default:
 		// Unsupported
 		return true
 	}
 
-	c, err := net.DialTimeout(sType, sName, timeout)
 	if err != nil {
 		sOk = false
 	} else {
 		sOk = true
 	}
+
 	if c != nil {
 		defer c.Close()
 	}
