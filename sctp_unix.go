@@ -86,9 +86,9 @@ func (c *SCTPConn) Close() error {
 	return nil
 }
 
-// DialSCTP creates a connection to an SCTP server. It errors, if the connection
+// DialSCTP creates a connection to an SCTP server. It errors if the connection
 // couldn't be established within the timeout.
-// Address can be IPv4 or IPv6 address, and it must contain port.
+// Address can be an IPv4 or IPv6 address, and it must contain port.
 func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
 	sockAddr, err := addressToSockAddr(address)
 	if err != nil {
