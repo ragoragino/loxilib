@@ -17,5 +17,5 @@ import (
 
 // Not implemented for non-Unix systems.
 func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
-	return nil, nil
+	return nil, errors.New("sctp-no-unix-error")
 }

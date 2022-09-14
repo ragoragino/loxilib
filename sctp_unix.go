@@ -7,6 +7,7 @@ package loxilib
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -15,22 +16,6 @@ import (
 
 	"golang.org/x/sys/unix"
 )
-
-// ip6ZoneToInt converts an IP6 Zone net string to a unix int
-// returns 0 if zone is not a valid int
-func ip6ZoneToInt(zone string) int {
-	if zone == "" {
-		return 0
-	}
-
-	if ifi, err := net.InterfaceByName(zone); err == nil {
-		return ifi.Index
-	}
-
-	n, _ := strconv.Atoi(zone)
-
-	return n
-}
 
 // TODO: Add support for IPv6 zones.
 func parseAddr(addrPort string) (string, uint16, error) {
@@ -42,7 +27,7 @@ func parseAddr(addrPort string) (string, uint16, error) {
 	host := addrPort[:colonIx]
 	if len(host) > 0 && host[0] == '[' {
 		if len(host) < 2 || host[len(host)-1] != ']' {
-			return "", 0, errors.New("sctp-addr-err")
+			return "", 0, errors.New("sctp-ipv6-addr-err")
 		}
 
 		host = host[1 : len(host)-1]
@@ -60,7 +45,7 @@ func parseAddr(addrPort string) (string, uint16, error) {
 	return host, uint16(port), nil
 }
 
-func parseAddrPort(addrPort string) (unix.Sockaddr, error) {
+func addressToSockAddr(addrPort string) (unix.Sockaddr, error) {
 	host, port, err := parseAddr(addrPort)
 	if err != nil {
 		return nil, err
@@ -71,6 +56,7 @@ func parseAddrPort(addrPort string) (unix.Sockaddr, error) {
 		return nil, errors.New("sctp-addr-err")
 	}
 
+	// IPv6 case
 	if ip.To4() == nil {
 		sockAddr := &unix.SockaddrInet6{
 			Port: int(port),
@@ -100,8 +86,11 @@ func (c *SCTPConn) Close() error {
 	return nil
 }
 
-func DialSCTP(addressPort string, timeout time.Duration) (*SCTPConn, error) {
-	sockAddr, err := parseAddrPort(addressPort)
+// DialSCTP creates a connection to an SCTP server. It errors, if the connection
+// couldn't be established within the timeout.
+// Address can be IPv4 or IPv6 address, and it must contain port.
+func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
+	sockAddr, err := addressToSockAddr(address)
 	if err != nil {
 		return nil, err
 	}
@@ -121,10 +110,15 @@ func DialSCTP(addressPort string, timeout time.Duration) (*SCTPConn, error) {
 	}, nil
 }
 
-// TODO: Some more error information / or logging?
-// TODO: Shouldn't we handle EINTR?
+// TODO: Add more error logging
+// TODO: Add EINTR handling
 func sctpConnect(sa unix.Sockaddr, timeout time.Duration) (int, error) {
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_SCTP)
+	domain := unix.AF_INET
+	if _, ok := sa.(*unix.SockaddrInet6); ok {
+		domain = unix.AF_INET6
+	}
+
+	fd, err := unix.Socket(domain, unix.SOCK_STREAM, unix.IPPROTO_SCTP)
 	if err != nil {
 		return fd, err
 	}
@@ -143,19 +137,22 @@ func sctpConnect(sa unix.Sockaddr, timeout time.Duration) (int, error) {
 	}
 
 	// Wait for the fd to become ready until the timeout expires
-	timeval := unix.NsecToTimeval(int64(timeout))
-
-	writeSet := new(unix.FdSet)
-	writeSet.Zero()
-	writeSet.Set(fd)
-
-	ready, err := unix.Select(fd+1, nil, writeSet, nil, &timeval)
+	pfds := []unix.PollFd{
+		{
+			Fd:     int32(fd),
+			Events: unix.POLLOUT,
+		},
+	}
+	ready, err := unix.Poll(pfds, int(timeout.Milliseconds()))
 	if err != nil {
 		return fd, err
 	}
 
+	// Check whether the timeout expired or any of the errors occurred
 	if ready == 0 {
 		return fd, errors.New("sctp-connect-err")
+	} else if (pfds[0].Revents & unix.POLLOUT) == 0 {
+		return fd, fmt.Errorf("sctp-poll-fail-%d", pfds[0].Revents)
 	}
 
 	return fd, nil
