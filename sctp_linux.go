@@ -5,8 +5,8 @@ package loxilib
 
 import (
 	"errors"
+	"net/netip"
 	"strconv"
-	"strings"
 	"sys/unix"
 	"time"
 
@@ -15,9 +15,45 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// ip6ZoneToInt converts an IP6 Zone net string to a unix int
+// returns 0 if zone is "" or not a valid int
+func ip6ZoneToInt(zone string) int {
+	if zone == "" {
+		return 0
+	}
+
+	if ifi, err := net.InterfaceByName(zone); err == nil {
+		return ifi.Index
+	}
+
+	n, _ := strconv.Atoi(zone)
+
+	return n
+}
+
+func AddrPortToSockAddr(addrPort *netip.AddrPort) interface{} {
+	if addrPort.Addr().Is6() {
+		sockAddr := &unix.SockaddrInet6{
+			Port:   addrPort.Port(),
+			ZoneId: ip6ZoneToInt(addrPort.Addr().Zone()),
+		}
+		copy(sockAddr.Addr[:], addrPort.Addr.As16())
+
+		return sockAddr
+	}
+
+	sockAddr := &unix.SockaddrInet4{
+		Port: addrPort.Port(),
+	}
+	copy(sockAddr.Addr[:], addrPort.Addr.As4())
+
+	return sockAddr
+}
+
 // Implements net.Conn on SCTP
 type SCTPConn struct {
-	fd int
+	fd         int
+	remoteAddr *netip.AddrPort
 }
 
 func (c *SCTPConn) Read(b []byte) (n int, err error) {
@@ -37,11 +73,12 @@ func (c *SCTPConn) Close() error {
 }
 
 func (c *SCTPConn) LocalAddr() net.Addr {
-
+	// TODO
+	return nil
 }
 
 func (c *SCTPConn) RemoteAddr() net.Addr {
-
+	return c.remoteAddr
 }
 
 func (c *SCTPConn) SetDeadline(t time.Time) error {
@@ -56,22 +93,22 @@ func (c *SCTPConn) SetWriteDeadline(t time.Time) error {
 	return errors.New("SetWriteDeadline not implemented")
 }
 
+func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
+	// Try to close the file descriptor if an error occurs.
+	c, err := dialSCTPInternal(address, timeout)
+	if err != nil && c != nil {
+		c.Close()
+	}
+
+	return c, err
+}
+
 // TODO: Some more error information / or logging?
 // TODO: Shouldn't we handle EINTR?
-func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
-	addressComponents := strings.Split(address, ":")
-	if len(addressComponents) != 2 {
-		return nil, errors.New("sctp-address-format-err")
-	}
-
-	port, err := strconv.ParseInt(addressComponents[1], 10, 32)
+func dialSCTPInternal(address string, timeout time.Duration) (net.Conn, error) {
+	addrPort, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return nil, err
-	}
-
-	host := net.ParseIP(addressComponents[0])
-	if host == nil {
-		return nil, errors.New("ip-address-err")
 	}
 
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_SCTP)
@@ -84,19 +121,15 @@ func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
 		return nil, err
 	}
 
-	sockAddr := &unix.SockaddrInet4{
-		Port: port,
-		Addr: host.To4(),
-	}
-	copy(sockAddr.Addr[:], host.To4())
-
-	err = unix.Connect(fd, sockAddr)
+	err = unix.Connect(fd, AddrPortToSockAddr(addrPort))
 	if err != nil {
+		// These errors signal that connection might still finish async
 		if err != unix.EINPROGRESS && err != unix.EINTR {
 			return nil, err
 		}
 	}
 
+	// Wait for the fd to become ready until the timeout expires
 	timespec := unix.NsecToTimespec(int64(timeout))
 
 	writeSet := new(unix.FdSet)
@@ -115,6 +148,7 @@ func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
 	}
 
 	return &SCTPConn{
-		fd: fd,
+		fd:         fd,
+		remoteAddr: addrPort,
 	}, nil
 }
