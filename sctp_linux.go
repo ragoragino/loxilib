@@ -16,7 +16,7 @@ import (
 )
 
 // ip6ZoneToInt converts an IP6 Zone net string to a unix int
-// returns 0 if zone is "" or not a valid int
+// returns 0 if zone is not a valid int
 func ip6ZoneToInt(zone string) int {
 	if zone == "" {
 		return 0
@@ -50,7 +50,6 @@ func AddrPortToSockAddr(addrPort *netip.AddrPort) interface{} {
 	return sockAddr
 }
 
-// Implements net.Conn on SCTP
 type SCTPConn struct {
 	fd         int
 	remoteAddr *netip.AddrPort
@@ -65,38 +64,45 @@ func (c *SCTPConn) Close() error {
 }
 
 func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
-	// Try to close the file descriptor if an error occurs.
-	c, err := dialSCTPInternal(address, timeout)
-	if err != nil && c != nil {
-		c.Close()
-	}
-
-	return c, err
-}
-
-// TODO: Some more error information / or logging?
-// TODO: Shouldn't we handle EINTR?
-func dialSCTPInternal(address string, timeout time.Duration) (*SCTPConn, error) {
 	addrPort, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return nil, err
 	}
 
+	fd, err := sctpConnect(AddrPortToSockAddr(addrPort), timeout)
+	if err != nil {
+		// Try to close the file descriptor if an error occurred
+		if fd > 0 {
+			unix.Close(fd)
+		}
+
+		return nil, err
+	}
+
+	return &SCTPConn{
+		fd:         fd,
+		remoteAddr: addrPort,
+	}, nil
+}
+
+// TODO: Some more error information / or logging?
+// TODO: Shouldn't we handle EINTR?
+func sctpConnect(sockAddr interface{}, timeout time.Duration) (int, error) {
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, unix.IPPROTO_SCTP)
 	if err != nil {
-		return nil, err
+		return fd, err
 	}
 
 	err = unix.SetNonblock(fd, true)
 	if err != nil {
-		return nil, err
+		return fd, err
 	}
 
-	err = unix.Connect(fd, AddrPortToSockAddr(addrPort))
+	err = unix.Connect(fd)
 	if err != nil {
 		// These errors signal that connection might still finish async
 		if err != unix.EINPROGRESS && err != unix.EINTR {
-			return nil, err
+			return fd, err
 		}
 	}
 
@@ -109,17 +115,12 @@ func dialSCTPInternal(address string, timeout time.Duration) (*SCTPConn, error) 
 
 	ready, err := unix.Select(fd+1, nil, writeSet, nil, &timespec)
 	if err != nil {
-		return nil, err
+		return fd, err
 	}
 
 	if ready == 0 {
-		unix.Close(fd)
-
-		return nil, errors.New("sctp-connect-err")
+		return fd, errors.New("sctp-connect-err")
 	}
 
-	return &SCTPConn{
-		fd:         fd,
-		remoteAddr: addrPort,
-	}, nil
+	return fd, nil
 }
