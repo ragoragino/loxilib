@@ -56,14 +56,6 @@ type SCTPConn struct {
 	remoteAddr *netip.AddrPort
 }
 
-func (c *SCTPConn) Read(b []byte) (n int, err error) {
-	return 0, errors.New("Read not implemented")
-}
-
-func (c *SCTPConn) Write(b []byte) (n int, err error) {
-	return 0, errors.New("Write not implemented")
-}
-
 func (c *SCTPConn) Close() error {
 	if c.fd > 0 {
 		return unix.Close(c.fd)
@@ -72,28 +64,7 @@ func (c *SCTPConn) Close() error {
 	return nil
 }
 
-func (c *SCTPConn) LocalAddr() net.Addr {
-	// TODO
-	return nil
-}
-
-func (c *SCTPConn) RemoteAddr() net.Addr {
-	return c.remoteAddr
-}
-
-func (c *SCTPConn) SetDeadline(t time.Time) error {
-	return errors.New("SetDeadline not implemented")
-}
-
-func (c *SCTPConn) SetReadDeadline(t time.Time) error {
-	return errors.New("SetReadDeadline not implemented")
-}
-
-func (c *SCTPConn) SetWriteDeadline(t time.Time) error {
-	return errors.New("SetWriteDeadline not implemented")
-}
-
-func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
+func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
 	// Try to close the file descriptor if an error occurs.
 	c, err := dialSCTPInternal(address, timeout)
 	if err != nil && c != nil {
@@ -105,7 +76,7 @@ func DialSCTP(address string, timeout time.Duration) (net.Conn, error) {
 
 // TODO: Some more error information / or logging?
 // TODO: Shouldn't we handle EINTR?
-func dialSCTPInternal(address string, timeout time.Duration) (net.Conn, error) {
+func dialSCTPInternal(address string, timeout time.Duration) (*SCTPConn, error) {
 	addrPort, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return nil, err
