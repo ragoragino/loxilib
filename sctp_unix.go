@@ -110,8 +110,6 @@ func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
 	}, nil
 }
 
-// TODO: Add more error logging
-// TODO: Add EINTR handling
 func sctpConnect(sa unix.Sockaddr, timeout time.Duration) (int, error) {
 	domain := unix.AF_INET
 	if _, ok := sa.(*unix.SockaddrInet6); ok {
@@ -130,30 +128,46 @@ func sctpConnect(sa unix.Sockaddr, timeout time.Duration) (int, error) {
 
 	err = unix.Connect(fd, sa)
 	if err != nil {
-		// These errors signal that connection might still finish async
-		if err != unix.EINPROGRESS && err != unix.EINTR {
+		// EINPROGRESS signals that connection might still finish async
+		if err != unix.EINPROGRESS {
 			return fd, err
 		}
 	}
 
-	// Wait for the fd to become ready until the timeout expires
-	pfds := []unix.PollFd{
-		{
-			Fd:     int32(fd),
-			Events: unix.POLLOUT,
-		},
-	}
-	ready, err := unix.Poll(pfds, int(timeout.Milliseconds()))
-	if err != nil {
-		return fd, err
-	}
+	deadline := time.Now().Add(timeout)
 
-	// Check whether the timeout expired or any of the errors occurred
-	if ready == 0 {
-		return fd, errors.New("sctp-connect-err")
-	} else if (pfds[0].Revents & unix.POLLOUT) == 0 {
-		return fd, fmt.Errorf("sctp-poll-fail-%d", pfds[0].Revents)
-	}
+	for {
+		timeout = deadline.Sub(time.Now())
+		if timeout <= 0 {
+			return fd, errors.New("sctp-connect-err")
+		}
 
-	return fd, nil
+		// Wait for the fd to become ready until the timeout expires
+		pfds := []unix.PollFd{
+			{
+				Fd:     int32(fd),
+				Events: unix.POLLOUT,
+			},
+		}
+		ready, err := unix.Poll(pfds, int(timeout.Milliseconds()))
+		if err != nil {
+			// Syscall was interrupted, retry
+			if err == unix.EINTR {
+				continue
+			}
+
+			return fd, err
+		}
+
+		// Check whether the timeout expired or any of the errors occurred
+		if ready == 0 {
+			return fd, errors.New("sctp-poll-timeout-err")
+		} else if (pfds[0].Revents & unix.POLLOUT) == 0 {
+			errCode, _ := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_ERROR)
+
+			return fd, fmt.Errorf("sctp-poll-err-%d-%d", pfds[0].Revents, errCode)
+		}
+
+		return fd, nil
+	}
 }
