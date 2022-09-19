@@ -20,7 +20,7 @@ func HTTPProber(urls string) bool {
 }
 
 // L4ServiceProber - Do a probe for L4 service end-points
-// sType is "tcp" or "udp"
+// sType is "tcp", "udp", or "sctp"
 // sName is end-point IP address in string format
 // returns true/false depending on whether probing was successful
 func L4ServiceProber(sType string, sName string) bool {
