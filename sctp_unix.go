@@ -17,7 +17,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TODO: Add support for IPv6 zones.
 func parseAddr(addrPort string) (string, uint16, error) {
 	colonIx := strings.LastIndex(addrPort, ":")
 	if colonIx == -1 {
@@ -89,6 +88,7 @@ func (c *SCTPConn) Close() error {
 // DialSCTP creates a connection to an SCTP server. It errors if the connection
 // couldn't be established within the timeout.
 // Address can be an IPv4 or IPv6 address, and it must contain port.
+// Currently, we don't support IPv6 zones in the IPv6 addresses.
 func DialSCTP(address string, timeout time.Duration) (*SCTPConn, error) {
 	sockAddr, err := addressToSockAddr(address)
 	if err != nil {

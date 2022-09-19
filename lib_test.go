@@ -5,7 +5,10 @@ package loxilib
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 type Tk struct {
@@ -272,5 +275,57 @@ func TestCounter(t *testing.T) {
 	idx, err = cR.GetCounter()
 	if idx != 2 || err != nil {
 		t.Errorf("Counter get got %d of expected %d", idx, 2)
+	}
+}
+
+func TestSctp(t *testing.T) {
+	// IPv4
+	addr := "127.0.0.1:80"
+	expectedSockAddrIPv4 := &unix.SockaddrInet4{
+		Port: 80,
+		Addr: [4]byte{
+			127, 0, 0, 1,
+		},
+	}
+
+	sockAddr, err := addressToSockAddr(addr)
+	if err != nil {
+		t.Errorf("failed to convert address to unix.Sockaddr %v", err)
+	}
+
+	if !reflect.DeepEqual(expectedSockAddrIPv4, sockAddr) {
+		t.Errorf("Sockaddr got %+v instead of expected %+v", sockAddr, expectedSockAddrIPv4)
+	}
+
+	// IPv6
+	addr = "[fe80::1ff:fe23:4567:890a]:80"
+	expectedSockAddrIPv6 := &unix.SockaddrInet6{
+		Port: 80,
+		Addr: [16]byte{
+			254, 128, 0, 0, 0, 0, 0, 0, 1, 255, 254, 35, 69, 103, 137, 10,
+		},
+	}
+
+	sockAddr, err = addressToSockAddr(addr)
+	if err != nil {
+		t.Errorf("failed to convert address to unix.Sockaddr %v", err)
+	}
+
+	if !reflect.DeepEqual(expectedSockAddrIPv6, sockAddr) {
+		t.Errorf("Sockaddr got %+v instead of expected %+v", sockAddr, expectedSockAddrIPv6)
+	}
+
+	// IPv6 zones - not supported
+	addr = "[fe80::1ff:fe23:4567:890a]:80%eth3"
+	sockAddr, err = addressToSockAddr(addr)
+	if err == nil {
+		t.Errorf("no failure while parsing address to unix.Sockaddr %v", err)
+	}
+
+	// IP address without a port
+	addr = "fe80::1ff:fe23:4567:890a"
+	sockAddr, err = addressToSockAddr(addr)
+	if err == nil {
+		t.Errorf("no failure while parsing address to unix.Sockaddr %v", err)
 	}
 }
